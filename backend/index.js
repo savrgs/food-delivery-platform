@@ -12,6 +12,37 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret';
 
+// ----------------------------
+// Auth middleware (JWT)
+// ----------------------------
+function requireAuth(req, res, next) {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+
+  if (!token) return res.status(401).json({ error: 'missing token' });
+
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.user = payload; // { userId, role, email }
+    next();
+  } catch {
+    return res.status(401).json({ error: 'invalid token' });
+  }
+}
+
+// ----------------------------
+// Distance → delivery estimate
+// ----------------------------
+function estimateDeliveryMinutes(user, restaurant) {
+  const distance =
+    Math.abs(user.location_x - restaurant.location_x) +
+    Math.abs(user.location_y - restaurant.location_y);
+
+  if (distance <= 3) return 20;
+  if (distance <= 6) return 35;
+  return 50;
+}
+
 // ---- Health ----
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
@@ -96,6 +127,52 @@ app.post('/auth/login', async (req, res) => {
     );
 
     res.json({ token, user: { id: user.id, email: user.email, role: user.role } });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ---- Orders: Create (protected) ----
+app.post('/orders', requireAuth, async (req, res) => {
+  try {
+    const { restaurant_id } = req.body;
+
+    if (!restaurant_id) {
+      return res.status(400).json({ error: 'restaurant_id required' });
+    }
+
+    const userId = req.user.userId;
+
+    const userResult = await pool.query(
+      'SELECT id, location_x, location_y FROM users WHERE id = $1',
+      [userId]
+    );
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'user not found' });
+    }
+
+    const restaurantResult = await pool.query(
+      'SELECT id, location_x, location_y FROM restaurants WHERE id = $1 AND is_active = true',
+      [restaurant_id]
+    );
+    if (restaurantResult.rows.length === 0) {
+      return res.status(404).json({ error: 'restaurant not found' });
+    }
+
+    const user = userResult.rows[0];
+    const restaurant = restaurantResult.rows[0];
+
+    const estimated_delivery_min = estimateDeliveryMinutes(user, restaurant);
+
+    const orderResult = await pool.query(
+      `INSERT INTO orders (user_id, restaurant_id, status, estimated_delivery_min)
+       VALUES ($1, $2, 'PLACED', $3)
+       RETURNING id, user_id, restaurant_id, status, estimated_delivery_min, created_at`,
+      [user.id, restaurant.id, estimated_delivery_min]
+    );
+
+    res.status(201).json(orderResult.rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
