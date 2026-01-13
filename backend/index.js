@@ -59,6 +59,29 @@ app.get('/restaurants', async (req, res) => {
   }
 });
 
+// ---- Dishes for a restaurant (public) ----
+app.get('/restaurants/:id/dishes', async (req, res) => {
+  try {
+    const restaurantId = Number(req.params.id);
+    if (!Number.isInteger(restaurantId)) {
+      return res.status(400).json({ error: 'invalid restaurant id' });
+    }
+
+    const result = await pool.query(
+      `SELECT id, restaurant_id, name, description, price_cents, is_available
+       FROM dishes
+       WHERE restaurant_id = $1 AND is_available = true
+       ORDER BY id`,
+      [restaurantId]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'DB error' });
+  }
+});
+
 // ---- Auth: Register (customer) ----
 app.post('/auth/register', async (req, res) => {
   try {
@@ -134,6 +157,7 @@ app.post('/auth/login', async (req, res) => {
 });
 
 // ---- Orders: Create (protected) ----
+// Body: { "restaurant_id": 1 }
 app.post('/orders', requireAuth, async (req, res) => {
   try {
     const { restaurant_id } = req.body;
@@ -173,6 +197,128 @@ app.post('/orders', requireAuth, async (req, res) => {
     );
 
     res.status(201).json(orderResult.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ---- Orders: List my orders (protected) ----
+app.get('/orders', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    const result = await pool.query(
+      `SELECT id, restaurant_id, status, estimated_delivery_min, created_at
+       FROM orders
+       WHERE user_id = $1
+       ORDER BY id DESC`,
+      [userId]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ---- Orders: Add items to an order (protected) ----
+// Body: { "dish_id": 1, "quantity": 2 }
+app.post('/orders/:id/items', requireAuth, async (req, res) => {
+  try {
+    const orderId = Number(req.params.id);
+    const { dish_id, quantity } = req.body;
+
+    if (!Number.isInteger(orderId)) {
+      return res.status(400).json({ error: 'invalid order id' });
+    }
+    if (!dish_id || !quantity) {
+      return res.status(400).json({ error: 'dish_id and quantity required' });
+    }
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      return res.status(400).json({ error: 'quantity must be a positive integer' });
+    }
+
+    const userId = req.user.userId;
+
+    // Ensure order belongs to the logged-in user
+    const orderResult = await pool.query(
+      'SELECT id, restaurant_id FROM orders WHERE id = $1 AND user_id = $2',
+      [orderId, userId]
+    );
+    if (orderResult.rows.length === 0) {
+      return res.status(404).json({ error: 'order not found (or not yours)' });
+    }
+
+    const restaurantId = orderResult.rows[0].restaurant_id;
+
+    // Ensure dish exists and belongs to the same restaurant
+    const dishResult = await pool.query(
+      `SELECT id, restaurant_id, price_cents, is_available
+       FROM dishes
+       WHERE id = $1`,
+      [dish_id]
+    );
+    if (dishResult.rows.length === 0) {
+      return res.status(404).json({ error: 'dish not found' });
+    }
+
+    const dish = dishResult.rows[0];
+    if (!dish.is_available) {
+      return res.status(400).json({ error: 'dish not available' });
+    }
+    if (dish.restaurant_id !== restaurantId) {
+      return res.status(400).json({ error: 'dish does not belong to this order restaurant' });
+    }
+
+    // Upsert into order_items: if exists, increase quantity; else insert
+    const upsert = await pool.query(
+      `INSERT INTO order_items (order_id, dish_id, quantity, price_cents_at_order)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (order_id, dish_id)
+       DO UPDATE SET quantity = order_items.quantity + EXCLUDED.quantity
+       RETURNING order_id, dish_id, quantity, price_cents_at_order`,
+      [orderId, dish_id, quantity, dish.price_cents]
+    );
+
+    res.status(201).json(upsert.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ---- Orders: Get one order with items (protected) ----
+app.get('/orders/:id', requireAuth, async (req, res) => {
+  try {
+    const orderId = Number(req.params.id);
+    if (!Number.isInteger(orderId)) {
+      return res.status(400).json({ error: 'invalid order id' });
+    }
+
+    const userId = req.user.userId;
+
+    const orderResult = await pool.query(
+      `SELECT id, user_id, restaurant_id, status, estimated_delivery_min, created_at
+       FROM orders
+       WHERE id = $1 AND user_id = $2`,
+      [orderId, userId]
+    );
+    if (orderResult.rows.length === 0) {
+      return res.status(404).json({ error: 'order not found (or not yours)' });
+    }
+
+    const itemsResult = await pool.query(
+      `SELECT oi.dish_id, d.name, oi.quantity, oi.price_cents_at_order
+       FROM order_items oi
+       JOIN dishes d ON d.id = oi.dish_id
+       WHERE oi.order_id = $1
+       ORDER BY oi.dish_id`,
+      [orderId]
+    );
+
+    res.json({ order: orderResult.rows[0], items: itemsResult.rows });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
