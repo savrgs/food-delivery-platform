@@ -339,7 +339,7 @@ This project was created for educational purposes as part of a school project.
 
 ## 👨‍💻 Author
 
-**Your Name**
+**Safet Vrgovcevic**
 - GitHub: [@savrgs](https://github.com/savrgs)
 ---
 
