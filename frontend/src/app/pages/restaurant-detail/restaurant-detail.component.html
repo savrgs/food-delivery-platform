@@ -1,0 +1,206 @@
+<div class="restaurant-detail">
+  <!-- Header with back button -->
+  <header class="detail-header">
+    <button class="back-btn" (click)="goBack()">
+      ← Back
+    </button>
+    <h1 *ngIf="restaurant">{{ restaurant.name }}</h1>
+  </header>
+
+  <!-- Loading State -->
+  <div *ngIf="loading" class="loading-state">
+    <div class="spinner"></div>
+    <p>Loading restaurant...</p>
+  </div>
+
+  <!-- Error State -->
+  <div *ngIf="error" class="error-state">
+    <p>{{ error }}</p>
+    <button class="btn-primary" (click)="goBack()">Go Back</button>
+  </div>
+
+  <!-- Restaurant Content -->
+  <div *ngIf="!loading && !error && restaurant" class="content">
+    <!-- Restaurant Info -->
+    <section class="restaurant-info">
+      <div class="info-card">
+        <h2>{{ restaurant.name }}</h2>
+        <p class="cuisine">{{ restaurant.cuisine_type }}</p>
+        <p class="address"><span class="location-dot"></span> {{ restaurant.address }}</p>
+        <div class="rating" *ngIf="reviews.length > 0">
+          <span class="stars">
+            <span *ngFor="let star of [1,2,3,4,5]" class="star" [class.filled]="star <= averageRating">★</span>
+          </span>
+          <span class="rating-text">{{ averageRating }} ({{ reviews.length }} reviews)</span>
+        </div>
+        <p *ngIf="reviews.length === 0" class="no-reviews">No reviews yet</p>
+      </div>
+    </section>
+
+    <!-- Cart Preview -->
+    <div class="cart-preview" *ngIf="cartItemCount > 0" (click)="goToCart()">
+      <span class="cart-icon-styled"></span>
+      <span class="cart-text">View Cart ({{ cartItemCount }} items)</span>
+      <span class="arrow">→</span>
+    </div>
+
+    <!-- Menu Section -->
+    <section class="menu-section">
+      <h3>Menu</h3>
+      
+      <div *ngIf="dishes.length === 0" class="empty-menu">
+        <p>No dishes available at this time.</p>
+      </div>
+
+      <div class="dishes-grid" *ngIf="dishes.length > 0">
+        <div *ngFor="let dish of dishes" class="dish-card">
+          <div class="dish-info">
+            <h4>{{ dish.name }}</h4>
+            <p class="description" *ngIf="dish.description">{{ dish.description }}</p>
+            <p class="price">€{{ formatPrice(dish.price_cents) }}</p>
+          </div>
+          <div class="dish-actions">
+            <button class="review-btn" (click)="openDishReviews(dish)" title="View & write reviews">
+              Reviews
+            </button>
+            <button class="add-btn" (click)="addToCart(dish)">
+              + Add
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Reviews Section -->
+    <section class="reviews-section">
+      <div class="reviews-header">
+        <h3>Reviews</h3>
+        <button class="btn-secondary" (click)="toggleReviewForm()">
+          {{ showReviewForm ? 'Cancel' : '+ Write Review' }}
+        </button>
+      </div>
+
+      <!-- Review Form -->
+      <div *ngIf="showReviewForm" class="review-form">
+        <div class="rating-input">
+          <label>Rating:</label>
+          <div class="star-select">
+            <span *ngFor="let star of [1,2,3,4,5]" 
+                  class="star-btn" 
+                  [class.selected]="star <= newReview.rating"
+                  (click)="newReview.rating = star">★</span>
+          </div>
+        </div>
+        <div class="comment-input">
+          <label>Your Review:</label>
+          <textarea 
+            [(ngModel)]="newReview.comment" 
+            rows="3" 
+            placeholder="Share your experience..."></textarea>
+        </div>
+        <button 
+          class="btn-primary" 
+          (click)="submitReview()" 
+          [disabled]="reviewSubmitting">
+          {{ reviewSubmitting ? 'Submitting...' : 'Submit Review' }}
+        </button>
+      </div>
+
+      <!-- Review List -->
+      <div class="reviews-list" *ngIf="reviews.length > 0">
+        <div *ngFor="let review of reviews" class="review-card">
+          <div class="review-header">
+            <span class="reviewer">{{ review.reviewer_name || 'Anonymous' }}</span>
+            <span class="review-date">{{ review.created_at | date:'mediumDate' }}</span>
+          </div>
+          <div class="review-rating">
+            <span *ngFor="let star of [1,2,3,4,5]" class="star" [class.filled]="star <= review.rating">★</span>
+          </div>
+          <p class="review-comment" *ngIf="review.comment">{{ review.comment }}</p>
+        </div>
+      </div>
+
+      <p *ngIf="reviews.length === 0 && !showReviewForm" class="no-reviews-message">
+        Be the first to review this restaurant!
+      </p>
+    </section>
+  </div>
+</div>
+
+<!-- Dish Review Modal -->
+<div class="modal-overlay" *ngIf="selectedDish" (click)="closeDishModal()">
+  <div class="modal-content" (click)="$event.stopPropagation()">
+    <div class="modal-header">
+      <h3>{{ selectedDish.name }}</h3>
+      <button class="close-btn" (click)="closeDishModal()">×</button>
+    </div>
+
+    <div class="modal-body">
+      <p class="dish-description" *ngIf="selectedDish.description">{{ selectedDish.description }}</p>
+      <p class="dish-price">€{{ formatPrice(selectedDish.price_cents) }}</p>
+
+      <div class="dish-rating" *ngIf="dishReviews.length > 0">
+        <span class="stars">
+          <span *ngFor="let star of [1,2,3,4,5]" class="star" [class.filled]="star <= getDishAverageRating()">★</span>
+        </span>
+        <span class="rating-text">{{ getDishAverageRating() }} ({{ dishReviews.length }} reviews)</span>
+      </div>
+
+      <div class="loading-reviews" *ngIf="loadingDishReviews">
+        <p>Loading reviews...</p>
+      </div>
+
+      <!-- Write Review Button -->
+      <div class="dish-review-actions" *ngIf="!loadingDishReviews">
+        <button class="btn-secondary" (click)="toggleDishReviewForm()">
+          {{ showDishReviewForm ? 'Cancel' : 'Write a Review' }}
+        </button>
+      </div>
+
+      <!-- Dish Review Form -->
+      <div *ngIf="showDishReviewForm" class="review-form">
+        <div class="rating-input">
+          <label>Rating:</label>
+          <div class="star-select">
+            <span *ngFor="let star of [1,2,3,4,5]" 
+                  class="star-btn" 
+                  [class.selected]="star <= newDishReview.rating"
+                  (click)="newDishReview.rating = star">★</span>
+          </div>
+        </div>
+        <div class="comment-input">
+          <label>Your Review:</label>
+          <textarea 
+            [(ngModel)]="newDishReview.comment" 
+            rows="3" 
+            placeholder="What did you think of this dish?"></textarea>
+        </div>
+        <button 
+          class="btn-primary" 
+          (click)="submitDishReview()" 
+          [disabled]="dishReviewSubmitting">
+          {{ dishReviewSubmitting ? 'Submitting...' : 'Submit Review' }}
+        </button>
+      </div>
+
+      <!-- Dish Reviews List -->
+      <div class="dish-reviews-list" *ngIf="!loadingDishReviews && dishReviews.length > 0">
+        <h4>Reviews</h4>
+        <div *ngFor="let review of dishReviews" class="review-card">
+          <div class="review-header">
+            <span class="reviewer">{{ review.reviewer_name || 'Anonymous' }}</span>
+            <span class="review-date">{{ review.created_at | date:'mediumDate' }}</span>
+          </div>
+          <div class="review-rating">
+            <span *ngFor="let star of [1,2,3,4,5]" class="star" [class.filled]="star <= review.rating">★</span>
+          </div>
+          <p class="review-comment" *ngIf="review.comment">{{ review.comment }}</p>
+        </div>
+      </div>
+
+      <p *ngIf="!loadingDishReviews && dishReviews.length === 0 && !showDishReviewForm" class="no-reviews-message">
+        No reviews yet. Be the first to review this dish!
+      </p>
+    </div>
+  </div>
+</div>

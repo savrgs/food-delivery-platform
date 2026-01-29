@@ -3,6 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const nodemailer = require('nodemailer');
+const crypto = require('crypto');
 const pool = require('./db');
 
 const app = express();
@@ -11,6 +13,17 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:4200';
+
+// Email configuration using environment variables
+// For Gmail: use App Password (not regular password)
+const emailTransporter = nodemailer.createTransport({
+  service: process.env.EMAIL_SERVICE || 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  }
+});
 
 // ----------------------------
 // Auth middleware (JWT)
@@ -40,15 +53,16 @@ function requireRole(...roles) {
 
 // ----------------------------
 // Distance → delivery estimate
+// Uses same formula as frontend: base 15 min + 3 min per km, rounded to nearest 5
 // ----------------------------
 function estimateDeliveryMinutes(user, restaurant) {
   const distance =
     Math.abs(user.location_x - restaurant.location_x) +
     Math.abs(user.location_y - restaurant.location_y);
 
-  if (distance <= 3) return 20;
-  if (distance <= 6) return 35;
-  return 50;
+  // Base time 15 min + 3 min per km, rounded to nearest 5
+  const time = Math.round(15 + distance * 3);
+  return Math.ceil(time / 5) * 5;
 }
 
 function clampInt(n, min, max) {
@@ -70,7 +84,7 @@ app.get('/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/restaurants', async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, name, cuisine, location_x, location_y, is_active FROM restaurants WHERE is_active = true ORDER BY id'
+      'SELECT id, name, cuisine, cuisine_type, address, location_x, location_y, is_active FROM restaurants WHERE is_active = true ORDER BY id'
     );
     res.json(result.rows);
   } catch (err) {
@@ -170,6 +184,157 @@ app.post('/auth/login', async (req, res) => {
     );
 
     res.json({ token, user: { id: user.id, email: user.email, role: user.role } });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ---- Auth: Forgot Password (request reset) ----
+// In-memory store for reset tokens (in production, use database)
+const resetTokens = new Map(); // token -> { email, expires }
+
+app.post('/auth/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'email required' });
+    }
+
+    // Check if user exists
+    const result = await pool.query('SELECT id, email, full_name FROM users WHERE email = $1', [email]);
+    
+    if (result.rows.length === 0) {
+      // Don't reveal if email exists - return success anyway
+      return res.json({ message: 'If an account exists, a reset link has been sent' });
+    }
+
+    const user = result.rows[0];
+
+    // Generate a random reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    
+    // Store token with 1 hour expiry
+    resetTokens.set(resetToken, {
+      email: email,
+      expires: Date.now() + (60 * 60 * 1000) // 1 hour
+    });
+
+    const resetLink = `${FRONTEND_URL}/reset-password?token=${resetToken}`;
+
+    // Send email if credentials are configured
+    if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+      try {
+        await emailTransporter.sendMail({
+          from: `"FreshEats" <${process.env.EMAIL_USER}>`,
+          to: email,
+          subject: 'Reset Your FreshEats Password',
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+              <div style="text-align: center; margin-bottom: 30px;">
+                <h1 style="color: #a67b5b; margin: 0;">FreshEats</h1>
+              </div>
+              <h2 style="color: #333;">Password Reset Request</h2>
+              <p>Hi ${user.full_name || 'there'},</p>
+              <p>We received a request to reset your password. Click the button below to create a new password:</p>
+              <div style="text-align: center; margin: 30px 0;">
+                <a href="${resetLink}" style="background: linear-gradient(135deg, #c9956c 0%, #a67b5b 100%); color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
+                  Reset Password
+                </a>
+              </div>
+              <p style="color: #666; font-size: 14px;">This link will expire in 1 hour.</p>
+              <p style="color: #666; font-size: 14px;">If you didn't request this, you can safely ignore this email.</p>
+              <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+              <p style="color: #999; font-size: 12px; text-align: center;">
+                FreshEats - Delicious food delivered to your door
+              </p>
+            </div>
+          `
+        });
+        console.log(`Password reset email sent to ${email}`);
+        res.json({ message: 'Password reset link sent to your email' });
+      } catch (emailErr) {
+        console.error('Failed to send email:', emailErr);
+        // Fall back to returning token for demo
+        res.json({ 
+          message: 'Email sending failed. Use the demo link.',
+          resetToken: resetToken
+        });
+      }
+    } else {
+      // No email configured - return token for demo purposes
+      console.log(`Password reset token for ${email}: ${resetToken}`);
+      res.json({ 
+        message: 'Password reset link sent (demo mode)',
+        resetToken: resetToken
+      });
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ---- Auth: Validate Reset Token ----
+app.post('/auth/validate-reset-token', (req, res) => {
+  const { token } = req.body;
+
+  if (!token) {
+    return res.status(400).json({ valid: false });
+  }
+
+  const tokenData = resetTokens.get(token);
+  
+  if (!tokenData) {
+    return res.json({ valid: false });
+  }
+
+  if (Date.now() > tokenData.expires) {
+    resetTokens.delete(token);
+    return res.json({ valid: false });
+  }
+
+  res.json({ valid: true });
+});
+
+// ---- Auth: Reset Password ----
+app.post('/auth/reset-password', async (req, res) => {
+  try {
+    const { token, new_password } = req.body;
+
+    if (!token || !new_password) {
+      return res.status(400).json({ error: 'token and new_password required' });
+    }
+
+    if (new_password.length < 6) {
+      return res.status(400).json({ error: 'password must be at least 6 characters' });
+    }
+
+    const tokenData = resetTokens.get(token);
+    
+    if (!tokenData) {
+      return res.status(400).json({ error: 'invalid or expired reset token' });
+    }
+
+    if (Date.now() > tokenData.expires) {
+      resetTokens.delete(token);
+      return res.status(400).json({ error: 'reset token has expired' });
+    }
+
+    // Hash new password
+    const password_hash = await bcrypt.hash(new_password, 10);
+
+    // Update password in database
+    await pool.query(
+      'UPDATE users SET password_hash = $1 WHERE email = $2',
+      [password_hash, tokenData.email]
+    );
+
+    // Delete used token
+    resetTokens.delete(token);
+
+    res.json({ message: 'Password reset successful' });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -298,13 +463,13 @@ app.post('/orders', requireAuth, async (req, res) => {
     const user = userResult.rows[0];
     const restaurant = restaurantResult.rows[0];
 
-    const estimated_delivery_min = estimateDeliveryMinutes(user, restaurant);
+    const estimated_delivery_minutes = estimateDeliveryMinutes(user, restaurant);
 
     const orderResult = await pool.query(
-      `INSERT INTO orders (user_id, restaurant_id, status, estimated_delivery_min)
-       VALUES ($1, $2, 'PLACED', $3)
-       RETURNING id, user_id, restaurant_id, status, estimated_delivery_min, created_at`,
-      [user.id, restaurant.id, estimated_delivery_min]
+      `INSERT INTO orders (user_id, restaurant_id, status, estimated_delivery_minutes)
+       VALUES ($1, $2, 'PENDING', $3)
+       RETURNING id, user_id, restaurant_id, status, estimated_delivery_minutes, total_cents, created_at`,
+      [user.id, restaurant.id, estimated_delivery_minutes]
     );
 
     res.status(201).json(orderResult.rows[0]);
@@ -320,10 +485,12 @@ app.get('/orders', requireAuth, async (req, res) => {
     const userId = req.user.userId;
 
     const result = await pool.query(
-      `SELECT id, restaurant_id, status, estimated_delivery_min, created_at
-       FROM orders
-       WHERE user_id = $1
-       ORDER BY id DESC`,
+      `SELECT o.id, o.restaurant_id, r.name as restaurant_name, o.status, 
+              o.estimated_delivery_minutes, o.total_cents, o.created_at, o.updated_at
+       FROM orders o
+       JOIN restaurants r ON r.id = o.restaurant_id
+       WHERE o.user_id = $1
+       ORDER BY o.id DESC`,
       [userId]
     );
 
@@ -345,9 +512,12 @@ app.get('/orders/:id', requireAuth, async (req, res) => {
     const userId = req.user.userId;
 
     const orderResult = await pool.query(
-      `SELECT id, user_id, restaurant_id, status, estimated_delivery_min, created_at
-       FROM orders
-       WHERE id = $1 AND user_id = $2`,
+      `SELECT o.id, o.user_id, o.restaurant_id, r.name as restaurant_name, 
+              o.status, o.estimated_delivery_minutes, o.total_cents, 
+              o.delivery_address, o.created_at, o.updated_at
+       FROM orders o
+       JOIN restaurants r ON r.id = o.restaurant_id
+       WHERE o.id = $1 AND o.user_id = $2`,
       [orderId, userId]
     );
     if (orderResult.rows.length === 0) {
@@ -355,7 +525,7 @@ app.get('/orders/:id', requireAuth, async (req, res) => {
     }
 
     const itemsResult = await pool.query(
-      `SELECT oi.dish_id, d.name, oi.quantity, oi.price_cents_at_order
+      `SELECT oi.dish_id, d.name as dish_name, oi.quantity, oi.price_cents_at_order as price_cents
        FROM order_items oi
        JOIN dishes d ON d.id = oi.dish_id
        WHERE oi.order_id = $1
@@ -363,7 +533,9 @@ app.get('/orders/:id', requireAuth, async (req, res) => {
       [orderId]
     );
 
-    res.json({ order: orderResult.rows[0], items: itemsResult.rows });
+    // Flatten to match frontend OrderDetail interface
+    const order = orderResult.rows[0];
+    res.json({ ...order, items: itemsResult.rows });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -390,7 +562,7 @@ app.post('/orders/:id/items', requireAuth, async (req, res) => {
     if (orderResult.rows.length === 0) return res.status(404).json({ error: 'order not found (or not yours)' });
 
     const order = orderResult.rows[0];
-    if (order.status !== 'PLACED') return res.status(400).json({ error: 'cannot modify items after order is processed' });
+    if (order.status !== 'PENDING') return res.status(400).json({ error: 'cannot modify items after order is processed' });
 
     const restaurantId = order.restaurant_id;
 
@@ -441,7 +613,7 @@ app.patch('/orders/:id/items', requireAuth, async (req, res) => {
     );
     if (orderResult.rows.length === 0) return res.status(404).json({ error: 'order not found (or not yours)' });
 
-    if (orderResult.rows[0].status !== 'PLACED') {
+    if (orderResult.rows[0].status !== 'PENDING') {
       return res.status(400).json({ error: 'cannot modify items after order is processed' });
     }
 
@@ -487,7 +659,7 @@ app.delete('/orders/:id/items/:dishId', requireAuth, async (req, res) => {
     );
     if (orderResult.rows.length === 0) return res.status(404).json({ error: 'order not found (or not yours)' });
 
-    if (orderResult.rows[0].status !== 'PLACED') {
+    if (orderResult.rows[0].status !== 'PENDING') {
       return res.status(400).json({ error: 'cannot modify items after order is processed' });
     }
 
@@ -504,9 +676,64 @@ app.delete('/orders/:id/items/:dishId', requireAuth, async (req, res) => {
   }
 });
 
+// ---- Cart: Checkout (confirm order) ----
+app.post('/orders/:id/checkout', requireAuth, async (req, res) => {
+  try {
+    const orderId = Number(req.params.id);
+    if (!Number.isInteger(orderId)) {
+      return res.status(400).json({ error: 'invalid order id' });
+    }
+
+    const userId = req.user.userId;
+
+    // Check order exists and belongs to user
+    const orderResult = await pool.query(
+      `SELECT o.id, o.status, o.restaurant_id, r.name as restaurant_name
+       FROM orders o
+       JOIN restaurants r ON r.id = o.restaurant_id
+       WHERE o.id = $1 AND o.user_id = $2`,
+      [orderId, userId]
+    );
+    if (orderResult.rows.length === 0) {
+      return res.status(404).json({ error: 'order not found (or not yours)' });
+    }
+
+    const order = orderResult.rows[0];
+    if (order.status !== 'PENDING') {
+      return res.status(400).json({ error: 'order already processed' });
+    }
+
+    // Calculate total from items
+    const itemsResult = await pool.query(
+      `SELECT SUM(quantity * price_cents_at_order) as total
+       FROM order_items WHERE order_id = $1`,
+      [orderId]
+    );
+    const totalCents = itemsResult.rows[0]?.total || 0;
+
+    if (totalCents === 0) {
+      return res.status(400).json({ error: 'cannot checkout empty order' });
+    }
+
+    // Update order to CONFIRMED
+    const upd = await pool.query(
+      `UPDATE orders
+       SET status = 'CONFIRMED', total_cents = $2, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+       RETURNING id, user_id, restaurant_id, status, estimated_delivery_minutes, total_cents, created_at, updated_at`,
+      [orderId, totalCents]
+    );
+
+    res.json({ ...upd.rows[0], restaurant_name: order.restaurant_name });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // ---- Order Tracking: Update status (protected) ----
-// CUSTOMER: only CANCELLED
-// OWNER/ADMIN: ACCEPTED, PREPARING, READY, DISPATCHED, DELIVERED, REJECTED
+// CUSTOMER: CANCELLED or DELIVERED (for demo simulation)
+// OWNER/ADMIN: CONFIRMED, PREPARING, OUT_FOR_DELIVERY, DELIVERED, CANCELLED
 app.patch('/orders/:id/status', requireAuth, async (req, res) => {
   try {
     const orderId = Number(req.params.id);
@@ -517,21 +744,21 @@ app.patch('/orders/:id/status', requireAuth, async (req, res) => {
 
     const newStatus = String(status).toUpperCase();
 
-    const customerAllowed = ['CANCELLED'];
-    const staffAllowed = ['ACCEPTED', 'PREPARING', 'READY', 'DISPATCHED', 'DELIVERED', 'REJECTED'];
+    const customerAllowed = ['CANCELLED', 'DELIVERED'];
+    const staffAllowed = ['CONFIRMED', 'PREPARING', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED'];
 
     const userId = req.user.userId;
     const role = req.user.role;
 
     if (role === 'CUSTOMER') {
-      if (!customerAllowed.includes(newStatus)) return res.status(403).json({ error: 'customers can only cancel' });
+      if (!customerAllowed.includes(newStatus)) return res.status(403).json({ error: 'customers can only cancel or confirm delivery' });
 
       // customer can only cancel their own order
       const upd = await pool.query(
         `UPDATE orders
-         SET status = $3
+         SET status = $3, updated_at = CURRENT_TIMESTAMP
          WHERE id = $1 AND user_id = $2
-         RETURNING id, user_id, restaurant_id, status, estimated_delivery_min, created_at`,
+         RETURNING id, user_id, restaurant_id, status, estimated_delivery_minutes, total_cents, created_at, updated_at`,
         [orderId, userId, newStatus]
       );
       if (upd.rows.length === 0) return res.status(404).json({ error: 'order not found (or not yours)' });
@@ -543,9 +770,9 @@ app.patch('/orders/:id/status', requireAuth, async (req, res) => {
 
     const upd = await pool.query(
       `UPDATE orders
-       SET status = $2
+       SET status = $2, updated_at = CURRENT_TIMESTAMP
        WHERE id = $1
-       RETURNING id, user_id, restaurant_id, status, estimated_delivery_min, created_at`,
+       RETURNING id, user_id, restaurant_id, status, estimated_delivery_minutes, total_cents, created_at, updated_at`,
       [orderId, newStatus]
     );
 
@@ -618,10 +845,11 @@ app.get('/dishes/:id/reviews', async (req, res) => {
     if (!Number.isInteger(dishId)) return res.status(400).json({ error: 'invalid dish id' });
 
     const result = await pool.query(
-      `SELECT id, dish_id, user_id, rating, comment, created_at
-       FROM dish_reviews
-       WHERE dish_id = $1
-       ORDER BY created_at DESC`,
+      `SELECT dr.id, dr.dish_id, dr.user_id, dr.rating, dr.comment, dr.created_at, u.full_name AS reviewer_name
+       FROM dish_reviews dr
+       LEFT JOIN users u ON dr.user_id = u.id
+       WHERE dr.dish_id = $1
+       ORDER BY dr.created_at DESC`,
       [dishId]
     );
 
@@ -649,11 +877,15 @@ app.post('/dishes/:id/reviews', requireAuth, async (req, res) => {
     const dishResult = await pool.query('SELECT id FROM dishes WHERE id = $1', [dishId]);
     if (dishResult.rows.length === 0) return res.status(404).json({ error: 'dish not found' });
 
+    // Get reviewer name
+    const userResult = await pool.query('SELECT full_name FROM users WHERE id = $1', [userId]);
+    const reviewerName = userResult.rows[0]?.full_name || 'Anonymous';
+
     const ins = await pool.query(
-      `INSERT INTO dish_reviews (dish_id, user_id, rating, comment)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, dish_id, user_id, rating, comment, created_at`,
-      [dishId, userId, r, comment || null]
+      `INSERT INTO dish_reviews (dish_id, user_id, rating, comment, reviewer_name)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, dish_id, user_id, rating, comment, reviewer_name, created_at`,
+      [dishId, userId, r, comment || null, reviewerName]
     );
 
     res.status(201).json(ins.rows[0]);

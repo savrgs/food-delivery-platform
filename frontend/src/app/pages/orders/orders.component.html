@@ -1,0 +1,76 @@
+<div class="orders-page">
+  <!-- Header -->
+  <header class="orders-header">
+    <button class="back-btn" (click)="goHome()">← Home</button>
+    <h1>My Orders</h1>
+  </header>
+
+  <!-- Loading State -->
+  <div *ngIf="loading" class="loading-state">
+    <div class="spinner"></div>
+    <p>Loading orders...</p>
+  </div>
+
+  <!-- Error State -->
+  <div *ngIf="error" class="error-state">
+    <p>{{ error }}</p>
+    <button class="btn-primary" (click)="loadOrders()">Try Again</button>
+  </div>
+
+  <!-- Empty State -->
+  <div *ngIf="!loading && !error && orders.length === 0" class="empty-state">
+    <div class="empty-icon"></div>
+    <h2>No orders yet</h2>
+    <p>Your order history will appear here</p>
+    <button class="btn-primary" (click)="goHome()">Start Ordering</button>
+  </div>
+
+  <!-- Orders Content -->
+  <div *ngIf="!loading && !error && orders.length > 0" class="content">
+    <!-- Active Orders -->
+    <section *ngIf="activeOrders.length > 0" class="orders-section">
+      <h2>Active Orders</h2>
+      <div class="orders-list">
+        <div *ngFor="let order of activeOrders" class="order-card active" (click)="viewOrder(order)">
+          <div class="order-header">
+            <span class="order-id">Order #{{ order.id }}</span>
+            <span class="order-status" [class]="statusColors[order.status]">
+              {{ statusLabels[order.status] }}
+            </span>
+          </div>
+          <div class="order-details">
+            <span class="restaurant-name">{{ order.restaurant_name }}</span>
+            <span class="order-date">{{ order.created_at | date:'short' }}</span>
+          </div>
+          <div class="order-footer">
+            <span class="order-total">€{{ formatPrice(order.total_cents) }}</span>
+            <span class="view-link">Track Order →</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Past Orders -->
+    <section *ngIf="pastOrders.length > 0" class="orders-section">
+      <h2>Past Orders</h2>
+      <div class="orders-list">
+        <div *ngFor="let order of pastOrders" class="order-card" (click)="viewOrder(order)">
+          <div class="order-header">
+            <span class="order-id">Order #{{ order.id }}</span>
+            <span class="order-status" [class]="statusColors[order.status]">
+              {{ statusLabels[order.status] }}
+            </span>
+          </div>
+          <div class="order-details">
+            <span class="restaurant-name">{{ order.restaurant_name }}</span>
+            <span class="order-date">{{ order.created_at | date:'short' }}</span>
+          </div>
+          <div class="order-footer">
+            <span class="order-total">€{{ formatPrice(order.total_cents) }}</span>
+            <span class="view-link">View Details →</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>

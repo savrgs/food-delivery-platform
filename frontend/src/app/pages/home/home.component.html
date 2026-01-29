@@ -1,0 +1,141 @@
+<div class="home-container">
+  <!-- Navbar -->
+  <nav class="navbar">
+    <div class="navbar-brand">
+      <h1>FreshEats</h1>
+    </div>
+    <div class="navbar-menu">
+      @if (currentUser) {
+        <button class="nav-btn" (click)="goToOrders()" title="My Orders">
+          <span class="icon-orders"></span>
+        </button>
+        <button class="nav-btn cart-btn" (click)="goToCart()" title="Cart">
+          <span class="icon-cart"></span>
+          @if (cartItemCount > 0) {
+            <span class="cart-badge">{{ cartItemCount }}</span>
+          }
+        </button>
+        <button class="nav-btn" (click)="goToProfile()" title="Profile">
+          <span class="icon-profile"></span>
+        </button>
+      }
+    </div>
+  </nav>
+
+  <!-- Main Content -->
+  <main class="main-content">
+    <div class="content-header">
+      <h2>Available Restaurants</h2>
+      <p>Choose from our partner restaurants</p>
+    </div>
+
+    <!-- Search & Filters -->
+    <div class="search-filter-section">
+      <div class="search-bar">
+        <div class="search-input-wrapper">
+          <span class="search-icon"></span>
+          <input 
+            type="text" 
+            placeholder="Search restaurants..." 
+            [(ngModel)]="filters.searchQuery"
+            (input)="applyFilters()"
+            class="search-input"
+          />
+        </div>
+        <button class="filter-toggle-btn" (click)="toggleFilters()" [class.active]="showFilters">
+          <span class="filter-icon"></span>
+          <span>Filters</span>
+        </button>
+      </div>
+
+      @if (showFilters) {
+        <div class="filters-panel">
+          <div class="filter-row">
+            <!-- Cuisine Filter -->
+            <div class="filter-group">
+              <label>Cuisine Type</label>
+              <select [(ngModel)]="filters.cuisine" (change)="applyFilters()">
+                <option value="">All Cuisines</option>
+                @for (cuisine of cuisineTypes; track cuisine) {
+                  <option [value]="cuisine">{{ cuisine }}</option>
+                }
+              </select>
+            </div>
+
+            <!-- Delivery Time Filter -->
+            <div class="filter-group">
+              <label>Max Delivery Time: {{ filters.maxDeliveryTime }} min</label>
+              <input 
+                type="range" 
+                min="15" 
+                max="60" 
+                step="5"
+                [(ngModel)]="filters.maxDeliveryTime" 
+                (input)="applyFilters()"
+              />
+            </div>
+
+            <!-- Distance Filter -->
+            <div class="filter-group">
+              <label>Max Distance: {{ filters.maxDistance }} km</label>
+              <input 
+                type="range" 
+                min="1" 
+                max="20" 
+                step="1"
+                [(ngModel)]="filters.maxDistance" 
+                (input)="applyFilters()"
+              />
+            </div>
+          </div>
+
+          <button class="clear-filters-btn" (click)="clearFilters()">Clear All Filters</button>
+        </div>
+      }
+
+      <!-- Results count -->
+      <div class="results-info">
+        Showing {{ filteredRestaurants.length }} of {{ restaurants.length }} restaurants
+      </div>
+    </div>
+
+    @if (restaurants.length === 0) {
+      <div class="loading">
+        <div class="spinner"></div>
+        <p>Loading restaurants...</p>
+      </div>
+    } @else if (filteredRestaurants.length === 0) {
+      <div class="no-results">
+        <p>No restaurants match your filters.</p>
+        <button class="clear-filters-btn" (click)="clearFilters()">Clear Filters</button>
+      </div>
+    } @else {
+      <div class="restaurant-list">
+        @for (restaurant of filteredRestaurants; track restaurant.id) {
+          <div class="restaurant-card" (click)="viewRestaurant(restaurant)">
+            <div class="restaurant-header">
+              <div class="restaurant-name">{{ restaurant.name }}</div>
+              <div class="restaurant-badges">
+              <span class="badge" [class.delivery-badge]="estimateDeliveryTime(restaurant) <= 60" [class.delivery-slow-badge]="estimateDeliveryTime(restaurant) > 60">{{ estimateDeliveryTime(restaurant) }} min</span>
+                <span class="badge distance-badge">{{ calculateDistance(restaurant) }} km</span>
+              </div>
+            </div>
+            <div class="restaurant-cuisine">{{ restaurant.cuisine_type }}</div>
+            <div class="restaurant-location">
+              <span class="location-icon"></span> {{ restaurant.address || 'Herrengasse 42, 9020 Klagenfurt' }}
+            </div>
+            <div class="view-menu">View Menu →</div>
+          </div>
+        }
+      </div>
+    }
+  </main>
+
+  <!-- Cart Preview (floating) -->
+  @if (cartItemCount > 0) {
+    <div class="cart-preview-float" (click)="goToCart()">
+      <span class="cart-float-icon"></span>
+      <span class="cart-text">View Cart ({{ cartItemCount }} items)</span>
+    </div>
+  }
+</div>

@@ -1,0 +1,6 @@
+/* Root app component styles - minimal as routing handles everything */
+:host {
+  display: block;
+  width: 100%;
+  min-height: 100vh;
+}

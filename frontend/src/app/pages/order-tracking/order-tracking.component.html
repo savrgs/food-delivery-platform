@@ -1,0 +1,116 @@
+<div class="order-tracking-page">
+  <!-- Header -->
+  <header class="tracking-header">
+    <button class="back-btn" (click)="goToOrders()">← Orders</button>
+    <h1>Order #{{ order?.id }}</h1>
+  </header>
+
+  <!-- Loading State -->
+  <div *ngIf="loading" class="loading-state">
+    <div class="spinner"></div>
+    <p>Loading order details...</p>
+  </div>
+
+  <!-- Error State -->
+  <div *ngIf="error" class="error-state">
+    <p>{{ error }}</p>
+    <button class="btn-primary" (click)="goToOrders()">View All Orders</button>
+  </div>
+
+  <!-- Order Content -->
+  <div *ngIf="!loading && !error && order" class="content">
+    <!-- Status Card -->
+    <div class="status-card" [class.cancelled]="isCancelled">
+      <div class="status-icon">
+        <span *ngIf="effectiveStatus === 'PENDING'" class="status-pending-icon"></span>
+        <span *ngIf="effectiveStatus === 'CONFIRMED'" class="status-confirmed-icon"></span>
+        <span *ngIf="effectiveStatus === 'PREPARING'" class="status-preparing-icon"></span>
+        <span *ngIf="effectiveStatus === 'OUT_FOR_DELIVERY'" class="status-delivery-icon"></span>
+        <span *ngIf="effectiveStatus === 'DELIVERED'" class="status-delivered-icon"></span>
+        <span *ngIf="effectiveStatus === 'CANCELLED'" class="status-cancelled-icon"></span>
+      </div>
+      <h2 class="status-text">{{ statusLabels[effectiveStatus] }}</h2>
+      
+      <!-- ETA Display -->
+      <div class="eta" *ngIf="!isCompleted && etaMinutes > 0">
+        <span class="eta-label">Estimated arrival in</span>
+        <span class="eta-time">{{ etaMinutes }} min</span>
+      </div>
+      
+      <p *ngIf="effectiveStatus === 'DELIVERED'" class="delivered-text">
+        Your order has been delivered. Enjoy your meal!
+      </p>
+      <p *ngIf="isCancelled" class="cancelled-text">
+        This order has been cancelled.
+      </p>
+    </div>
+
+    <!-- Status Progress -->
+    <div class="progress-section" *ngIf="!isCancelled">
+      <div class="progress-track">
+        <div *ngFor="let step of statusSteps; let i = index" class="progress-step" [class]="getStepClass(step)">
+          <div class="step-dot">
+            <span class="dot-inner"></span>
+          </div>
+          <span class="step-label">{{ statusLabels[step] }}</span>
+        </div>
+        <div class="progress-line" [style.width.%]="(currentStepIndex / (statusSteps.length - 1)) * 100"></div>
+      </div>
+    </div>
+
+    <!-- Restaurant Info -->
+    <div class="info-card">
+      <div class="info-row">
+        <span class="info-icon restaurant"></span>
+        <div class="info-text">
+          <span class="info-label">Restaurant</span>
+          <span class="info-value">{{ order.restaurant_name }}</span>
+        </div>
+      </div>
+      <div class="info-row">
+        <span class="info-icon location"></span>
+        <div class="info-text">
+          <span class="info-label">Delivery Address</span>
+          <span class="info-value">{{ order.delivery_address || 'Herrengasse 42, 9020 Klagenfurt' }}</span>
+        </div>
+      </div>
+      <div class="info-row">
+        <span class="info-icon time"></span>
+        <div class="info-text">
+          <span class="info-label">Order Placed</span>
+          <span class="info-value">{{ order.created_at | date:'medium' }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Order Items -->
+    <div class="items-card">
+      <h3>Order Items</h3>
+      <div class="order-items">
+        <div *ngFor="let item of order.items" class="order-item">
+          <span class="item-qty">{{ item.quantity }}×</span>
+          <span class="item-name">{{ item.dish_name }}</span>
+          <span class="item-price">€{{ formatPrice(item.price_cents * item.quantity) }}</span>
+        </div>
+      </div>
+      <div class="order-total">
+        <span>Total</span>
+        <span class="total-amount">€{{ formatPrice(totalPrice) }}</span>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="actions">
+      <button 
+        *ngIf="order.status === 'PENDING'" 
+        class="btn-danger" 
+        (click)="cancelOrder()">
+        Cancel Order
+      </button>
+      
+      <button class="btn-primary" (click)="goHome()">
+        Order Again
+      </button>
+    </div>
+  </div>
+</div>

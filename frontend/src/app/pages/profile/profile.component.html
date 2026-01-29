@@ -1,0 +1,138 @@
+<div class="profile-page">
+  <!-- Header -->
+  <header class="profile-header">
+    <button class="back-btn" (click)="goHome()">← Home</button>
+    <h1>My Profile</h1>
+  </header>
+
+  <!-- Loading State -->
+  <div *ngIf="loading" class="loading-state">
+    <div class="spinner"></div>
+    <p>Loading profile...</p>
+  </div>
+
+  <!-- Profile Content -->
+  <div *ngIf="!loading && user" class="content">
+    <!-- Profile Card -->
+    <div class="profile-card">
+      <div class="avatar">
+        <span>{{ user.full_name?.charAt(0)?.toUpperCase() || user.email.charAt(0).toUpperCase() }}</span>
+      </div>
+      
+      <!-- Success Messages -->
+      <div *ngIf="profileSuccess" class="success-message">{{ profileSuccess }}</div>
+      <div *ngIf="passwordSuccess" class="success-message">{{ passwordSuccess }}</div>
+
+      <!-- View Mode -->
+      <div *ngIf="!editMode" class="profile-info">
+        <h2>{{ user.full_name || 'No name set' }}</h2>
+        <p class="email">{{ user.email }}</p>
+        <p class="role">{{ user.role }}</p>
+        <button class="btn-secondary" (click)="toggleEditMode()">Edit Profile</button>
+      </div>
+
+      <!-- Edit Mode -->
+      <form *ngIf="editMode" class="edit-form" (ngSubmit)="saveProfile()">
+        <div *ngIf="profileError" class="error-message">{{ profileError }}</div>
+        
+        <div class="form-group">
+          <label for="name">Name</label>
+          <input 
+            type="text" 
+            id="name" 
+            [(ngModel)]="profileForm.name" 
+            name="name"
+            placeholder="Your name">
+        </div>
+
+        <div class="form-group">
+          <label for="email">Email</label>
+          <input 
+            type="email" 
+            id="email" 
+            [value]="profileForm.email" 
+            disabled
+            class="disabled">
+          <small>Email cannot be changed</small>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn-cancel" (click)="toggleEditMode()">Cancel</button>
+          <button type="submit" class="btn-primary" [disabled]="profileSaving">
+            {{ profileSaving ? 'Saving...' : 'Save Changes' }}
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Password Section -->
+    <div class="section-card">
+      <div class="section-header">
+        <h3><span class="lock-icon"></span> Password</h3>
+        <button class="btn-link" (click)="togglePasswordForm()">
+          {{ showPasswordForm ? 'Cancel' : 'Change Password' }}
+        </button>
+      </div>
+
+      <form *ngIf="showPasswordForm" class="password-form" (ngSubmit)="changePassword()">
+        <div *ngIf="passwordError" class="error-message">{{ passwordError }}</div>
+
+        <div class="form-group">
+          <label for="currentPassword">Current Password</label>
+          <input 
+            type="password" 
+            id="currentPassword" 
+            [(ngModel)]="passwordForm.currentPassword" 
+            name="currentPassword"
+            placeholder="Enter current password">
+        </div>
+
+        <div class="form-group">
+          <label for="newPassword">New Password</label>
+          <input 
+            type="password" 
+            id="newPassword" 
+            [(ngModel)]="passwordForm.newPassword" 
+            name="newPassword"
+            placeholder="At least 6 characters">
+        </div>
+
+        <div class="form-group">
+          <label for="confirmPassword">Confirm New Password</label>
+          <input 
+            type="password" 
+            id="confirmPassword" 
+            [(ngModel)]="passwordForm.confirmPassword" 
+            name="confirmPassword"
+            placeholder="Confirm new password">
+        </div>
+
+        <button type="submit" class="btn-primary full-width" [disabled]="passwordSaving">
+          {{ passwordSaving ? 'Changing...' : 'Update Password' }}
+        </button>
+      </form>
+    </div>
+
+    <!-- Quick Links -->
+    <div class="section-card">
+      <h3>Quick Links</h3>
+      <div class="quick-links">
+        <a routerLink="/orders" class="quick-link">
+          <span class="link-icon orders"></span>
+          <span class="link-text">My Orders</span>
+          <span class="link-arrow">→</span>
+        </a>
+        <a routerLink="/" class="quick-link">
+          <span class="link-icon restaurants"></span>
+          <span class="link-text">Browse Restaurants</span>
+          <span class="link-arrow">→</span>
+        </a>
+      </div>
+    </div>
+
+    <!-- Logout -->
+    <button class="logout-btn" (click)="logout()">
+      Sign Out
+    </button>
+  </div>
+</div>
